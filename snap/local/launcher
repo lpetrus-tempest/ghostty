@@ -61,4 +61,43 @@ fi
 
 [ "$needs_update" = true ] && echo "LAST_REVISION=$SNAP_REVISION" > "$SNAP_USER_DATA/.last_revision"
 
+# Apply server-side decoration fix for core24 GTK 4.14.5 bug
+# Blocks GTK's premature CLIENT decoration request to allow Ghostty's
+# SERVER decoration request to be honored by the compositor.
+# This is a workaround for GTK bug fixed in 4.20.1+ (available in core25).
+# Users can disable with: GHOSTTY_SSD_FIX=0
+# The fix is only applied when window-decoration is set to "server" or "auto"
+if [ "${GHOSTTY_SSD_FIX:-auto}" != "0" ] && [ -f "${SNAP}/usr/lib/libghostty-decoration-fix.so" ]; then
+  # Check if we should apply the fix based on config
+  apply_fix=false
+  
+  # If explicitly enabled, always apply
+  if [ "${GHOSTTY_SSD_FIX}" = "1" ]; then
+    apply_fix=true
+  # If auto (default), check the config file
+  elif [ "${GHOSTTY_SSD_FIX}" = "auto" ] || [ -z "${GHOSTTY_SSD_FIX}" ]; then
+    config_file="${XDG_CONFIG_HOME}/ghostty/config"
+    if [ -f "$config_file" ]; then
+      # Parse window-decoration setting (defaults to "auto" if not set)
+      decoration=$(grep -E "^[[:space:]]*window-decoration[[:space:]]*=" "$config_file" | \
+                   sed -E 's/^[[:space:]]*window-decoration[[:space:]]*=[[:space:]]*//' | \
+                   sed -E 's/[[:space:]]*#.*//' | \
+                   sed -E 's/[[:space:]]*$//' | \
+                   tail -1)
+      
+      # Apply fix for "server" or "auto" (default), but not for "client" or "none"
+      if [ -z "$decoration" ] || [ "$decoration" = "auto" ] || [ "$decoration" = "server" ]; then
+        apply_fix=true
+      fi
+    else
+      # No config file means defaults apply (window-decoration = auto)
+      apply_fix=true
+    fi
+  fi
+  
+  if [ "$apply_fix" = "true" ]; then
+    export LD_PRELOAD="${SNAP}/usr/lib/libghostty-decoration-fix.so${LD_PRELOAD:+:$LD_PRELOAD}"
+  fi
+fi
+
 exec "$@"

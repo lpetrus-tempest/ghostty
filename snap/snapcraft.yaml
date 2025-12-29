@@ -37,6 +37,16 @@ parts:
     organize:
       launcher: app/
 
+  decoration-fix:
+    plugin: nil
+    source: snap/local
+    source-type: local
+    override-build: |
+      gcc -shared -fPIC -o libghostty-decoration-fix.so \
+          ghostty-server-decorations-poc.c -ldl -Wall
+      mkdir -p $CRAFT_PART_INSTALL/usr/lib
+      cp libghostty-decoration-fix.so $CRAFT_PART_INSTALL/usr/lib/
+
   zig:
     plugin: nil
     build-packages:
@@ -64,9 +74,23 @@ parts:
     prime:
       - -*
 
+  blueprint-compiler:
+    plugin: meson
+    source: https://gitlab.gnome.org/jwestman/blueprint-compiler.git
+    source-type: git
+    source-tag: v0.16.0
+    build-packages:
+      - meson
+      - ninja-build
+      - python3
+      - python3-pygments
+      - python3-gi
+    meson-parameters:
+      - --prefix=/usr
+
   ghostty:
     source: .
-    after: [zig]
+    after: [zig, blueprint-compiler]
     plugin: nil
     build-attributes: [enable-patchelf]
     build-packages:
@@ -78,12 +102,31 @@ parts:
       - gettext
     # TODO: Remove -fno-sys=gtk4-layer-shell when we upgrade to a version that packages it Ubuntu 24.10+
     override-build: |
-      craftctl set version=$(cat VERSION)
+      # Set version from git or fallback
+      VERSION=$(git -C $CRAFT_PART_SRC describe --tags --always 2>/dev/null || echo "tip")
+      craftctl set version="$VERSION"
+      # Add blueprint-compiler to PATH (built in previous part)
+      export PATH="$CRAFT_STAGE/usr/bin:$PATH"
+      # Add Python module path - check multiple possible locations
+      for pydir in $CRAFT_STAGE/usr/lib/python*/dist-packages $CRAFT_STAGE/usr/local/lib/python*/dist-packages; do
+        if [ -d "$pydir" ]; then
+          export PYTHONPATH="${PYTHONPATH:-}${PYTHONPATH:+:}$pydir"
+        fi
+      done
+      # Verify blueprint-compiler is available and working
+      echo "Checking blueprint-compiler..."
+      which blueprint-compiler || echo "ERROR: blueprint-compiler not in PATH"
+      echo "Testing blueprint-compiler..."
+      blueprint-compiler --version 2>&1 || echo "ERROR: blueprint-compiler failed with exit code $?"
+      echo "PYTHONPATH=$PYTHONPATH"
+      echo "Checking if blueprintcompiler module exists..."
+      ls -la $CRAFT_STAGE/usr/lib/python*/dist-packages/ 2>&1 | grep -i blueprint || echo "No blueprint in dist-packages"
       $CRAFT_PART_SRC/../../zig/src/zig build \
         -Dsnap \
         -Dpatch-rpath=\$ORIGIN/../usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:/snap/core24/current/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR \
         -Doptimize=ReleaseFast \
         -Dcpu=baseline \
+        -Demit-themes=false \
         -fno-sys=gtk4-layer-shell
       cp -rp zig-out/* $CRAFT_PART_INSTALL/
       sed -i 's|Icon=com.mitchellh.ghostty|Icon=${SNAP}/share/icons/hicolor/512x512/apps/com.mitchellh.ghostty.png|g' $CRAFT_PART_INSTALL/share/applications/com.mitchellh.ghostty.desktop
