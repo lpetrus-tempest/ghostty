@@ -43,7 +43,7 @@ parts:
     source-type: local
     override-build: |
       gcc -shared -fPIC -o libghostty-decoration-fix.so \
-          ghostty-server-decorations-poc.c -ldl -Wall
+          ghostty-server-decorations-poc.c -ldl -pthread -Wall
       mkdir -p $CRAFT_PART_INSTALL/usr/lib
       cp libghostty-decoration-fix.so $CRAFT_PART_INSTALL/usr/lib/
 
